@@ -118,35 +118,25 @@ def requestCredentials(appliance):
 ##################################################################
 def switch_template_in_profiles(oneview_client, template_in, file_in):
 
-    template = oneview_client.server_profile_templates.get_by_name(template_in)
-    print(template['name'], template['uri'])
-
-    #print("\nGet list of all server profiles")
-    #all_profiles = oneview_client.server_profiles.get_all()
-    #for profile in all_profiles:
-    #    print('  %s' % profile['name'])
+    template = oneview_client.server_profile_templates.get_by_name(template_in)    
 
     with open(file_in, "r") as list:
             for line in list:
                     line = line[:-1]
                     try:
                             print()
-                            print("Profile to update : {}".format(line))
-                            profile = oneview_client.server_profiles.get_by_name(
-                                line)
-                            profile_to_update = profile.copy()
-                            print("Before complete for Profile {} ,     template URI {}".format(profile_to_update['name'],
-                                                                                                profile_to_update[
-                                                                                                    'serverProfileTemplateUri']))
-                            profile_to_update["serverProfileTemplateUri"] = (
-                                template["uri"])
+                            print("Profile : {} update in progress".format(line))
+                            profile = oneview_client.server_profiles.get_by_name(line)
+                            profile_to_update = profile.copy()                            
+                            profile_to_update["serverProfileTemplateUri"] = (template["uri"])
                             profile_updated = oneview_client.server_profiles.update(resource=profile_to_update,
                                                                                     id_or_uri=profile_to_update["uri"])
-                            print("Update complete for Profile {} , New template URI {}".format(profile_updated['name'],
-                                                                                                profile_updated['serverProfileTemplateUri']))
-                            print()
+                            if profile_updated is not None:
+                                print("Profile : {} update complete".format(line))
+                            else:
+                                print("ERROR: Profile - {} update failed".format(line))                            
                     except HPOneViewException as e:
-                            print("Profile error")
+                            print("ERROR: Profile - {} update failed".format(line))
                             print(e.msg)
 
 ##################################################################
@@ -185,7 +175,7 @@ def validate_template(oneview_client, template_in):
     template = oneview_client.server_profile_templates.get_by_name(template_in)
     #print(template)
     if template is None:
-        print ("\nTemplate : {} - not found".format(template_in))
+        print ("\nERROR: Template : {} - not found".format(template_in))
         return 0
     else:
         return 1
@@ -244,9 +234,7 @@ def main():
             templateCheck = True
             
     if templateCheck and fileCheck:
-        switch_template_in_profiles(oneview_client, args.template, args.file)
-    else:
-        print ("\nFile or Template not validated")
+        switch_template_in_profiles(oneview_client, args.sp_template, args.file)    
     
     exit(0)
 
