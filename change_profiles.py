@@ -162,12 +162,15 @@ def print_profiles(oneview_client):
     print("   {:50}\t{}".format("===============", "========================"))
     profiles = oneview_client.server_profiles.get_all()
     for profile in profiles:
-        sp_template = oneview_client.server_profile_templates.get(profile['serverProfileTemplateUri'])
-        #print(profile['serverProfileTemplateUri'])
-        #print(sp_template)        
-        print('   {:50}\t{}'.format(profile['name'],sp_template['name']))
-
-##################################################################
+        if profile['serverProfileTemplateUri']:
+            sp_template = oneview_client.server_profile_templates.get(profile['serverProfileTemplateUri'])
+            #print(profile['serverProfileTemplateUri'])
+            #print(sp_template)        
+            print('   {:50}\t{}'.format(profile['name'],sp_template['name']))
+        else:
+            print('   {:50}\t{}'.format(profile['name'],"**None**"))
+    
+#################################################################
 # Function to validate if template exists
 #
 ##################################################################
