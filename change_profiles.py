@@ -29,9 +29,9 @@ from hpOneView.exceptions import HPOneViewException
 from hpOneView.oneview_client import OneViewClient
 
 import argparse
-import getpass
 import socket
 import os
+import pkg_resources
 
 
 ##################################################################
@@ -42,11 +42,13 @@ def buildArguments():
 
     ap = None
     ap = argparse.ArgumentParser(
-        description='This script updates existing server profiles with a new server profile template ')
+        description='This script updates existing server profiles with a new server profile template Please verify environment variables ONEVIEWSDK_USERNAME and ONEVIEWSDK_PASSWORD are set')
     ap.add_argument("-pt", "--print-templates", action='store_true',
                     dest="print_templates", help="Print configured Server profile templates ")
     ap.add_argument("-pp", "--print-profiles", action='store_true', dest="print_profiles",
                     help="Print configured profiles and associated templates ")        
+    ap.add_argument("-ut", "--update-from-template", action='store_true', dest="upd_from_profile_template",
+                    help="Update profiles from its template ")        
     ap.add_argument("-f", "--file",   dest="file",  help="File containing list of Server Profile names")
     ap.add_argument("-t", "--template",   dest="sp_template", help="Template name")
     ap.add_argument("-a", "--appliance",   dest="appliance", help="Appliance IP", required=True)
@@ -86,12 +88,10 @@ def validate_appliance(ip_in):
     try:  
         ip_out = socket.gethostbyname(ip_in) 
         socket.inet_aton(ip_out)
-        #print ("appliance ip {}".format(ip_out))
-        #print ("appliance {} reachable".format(ip))
         return 1
     except socket.error:
         # not legal
-        print ("ERROR: Appliance {} NOT reachable".format(ip))
+        print ("ERROR: Appliance {} NOT reachable".format(ip_in))
         return 0
 
 ##################################################################
@@ -99,8 +99,23 @@ def validate_appliance(ip_in):
 #
 ##################################################################
 def requestCredentials(appliance):
-    UserName = get_para("Username: ")
-    password = getpass.getpass()
+    #UserName = get_para("Username: ")
+    #password = getpass.getpass()
+    UserName = os.environ.get('ONEVIEWSDK_USERNAME')
+    password = os.environ.get('ONEVIEWSDK_PASSWORD')
+
+    if UserName is None or "":
+        print ('ERROR: ONEVIEWSDK_USERNAME environment variable not set')
+        return None    
+
+    if password is None or "":
+        print ('ERROR: ONEVIEWSDK_PASSWORD environment variable not set')
+        return None
+
+    # Replace the " from the above command   
+    UserName = UserName.replace('"','')
+    password = password.replace('"','')
+    #print(UserName, password)
     config = {
         "ip": appliance,
         "credentials": {
@@ -113,12 +128,38 @@ def requestCredentials(appliance):
     return config
 
 ##################################################################
+# Function to update a profile from its template
+#
+##################################################################
+def update_from_profile_template(oneview_client, file_in):
+    with open(file_in, "r") as list:
+            for line in list:
+                    line = line[:-1]
+                    try:
+                        profile = oneview_client.server_profiles.get_by_name(line)                        
+                        print()
+                        print("Profile : {} update from template in progress".format(line))
+                        if profile.data['templateCompliance'] == "NonCompliant":
+                            profile_updated = profile.patch(operation="replace", path="/templateCompliance", value="Compliant")
+
+                            if profile_updated.data['templateCompliance'] == 'Compliant':
+                                print("Profile : {} update from template completed ".format(line))
+                            else:
+                                print("ERROR: Profile : {} update from template".format(line))
+                        else:
+                            print("Profile : {} is compliant".format(line))
+
+                    except HPOneViewException as e:
+                            print("ERROR: Profile - {} update failed".format(line))                            
+                            print(e.msg)
+
+##################################################################
 # Function to switch template in profiles
 #
 ##################################################################
 def switch_template_in_profiles(oneview_client, template_in, file_in):
 
-    template = oneview_client.server_profile_templates.get_by_name(template_in)    
+    template = oneview_client.server_profile_templates.get_by_name(template_in)
 
     with open(file_in, "r") as list:
             for line in list:
@@ -127,14 +168,17 @@ def switch_template_in_profiles(oneview_client, template_in, file_in):
                             print()
                             print("Profile : {} update in progress".format(line))
                             profile = oneview_client.server_profiles.get_by_name(line)
-                            profile_to_update = profile.copy()                            
-                            profile_to_update["serverProfileTemplateUri"] = (template["uri"])
-                            profile_updated = oneview_client.server_profiles.update(resource=profile_to_update,
-                                                                                    id_or_uri=profile_to_update["uri"])
-                            if profile_updated is not None:
-                                print("Profile : {} update complete".format(line))
+                            profile_to_update = profile.data.copy()
+                            if profile_to_update['serverProfileTemplateUri'] != template.data["uri"]:
+                                profile_to_update["serverProfileTemplateUri"] = (template.data["uri"])                                
+                                profile_updated = profile.update(profile_to_update)
+                                if profile_updated is not None:
+                                    print("Profile : {} update complete".format(line))
+                                else:
+                                    print("ERROR: Profile - {} update failed".format(line))
                             else:
-                                print("ERROR: Profile - {} update failed".format(line))                            
+                                print ("Profile : {} - already rehomed".format(line))
+
                     except HPOneViewException as e:
                             print("ERROR: Profile - {} update failed".format(line))
                             print(e.msg)
@@ -158,17 +202,16 @@ def print_templates(oneview_client):
 ##################################################################
 def print_profiles(oneview_client):
     print("\n")
-    print("   {:50}\t{}".format("Server Profiles", "Server Profile Templates"))
-    print("   {:50}\t{}".format("===============", "========================"))
+    print("   {:50}\t{:60.60}\t{:10}\t{:15}".format("Server Profiles", "Server Profile Templates", "Status", "Compliance"))
+    print("   {:50}\t{:60}\t{:10}\t{:15}".format("===============", "========================", "======", "=========="))
     profiles = oneview_client.server_profiles.get_all()
     for profile in profiles:
         if profile['serverProfileTemplateUri']:
-            sp_template = oneview_client.server_profile_templates.get(profile['serverProfileTemplateUri'])
             #print(profile['serverProfileTemplateUri'])
-            #print(sp_template)        
-            print('   {:50}\t{}'.format(profile['name'],sp_template['name']))
+            sp_template = oneview_client.server_profile_templates.get_by_uri(profile['serverProfileTemplateUri']).data            
+            print('   {:50.50}\t{:60.60}\t{:10}\t{:15}'.format(profile['name'],sp_template['name'], profile['status'], profile['templateCompliance']))
         else:
-            print('   {:50}\t{}'.format(profile['name'],"**None**"))
+            print('   {:50.50}\t{:60.60}\t{:10}\t{:15}'.format(profile['name'],"**None**",profile['status'], profile['templateCompliance']))
     
 #################################################################
 # Function to validate if template exists
@@ -209,6 +252,12 @@ def main():
     fileCheck = False
     templateCheck = False
 
+    if pkg_resources.get_distribution('hpOneView').version < '5.0.0':
+        print ("ERROR : Please upgrade hpOneView library to 5.0.0 or greater")
+        print ("pip install --upgrade hpOneView")
+        exit(1)
+
+
     if args.appliance:
         if  not validate_appliance(args.appliance):
             exit(1)
@@ -221,6 +270,11 @@ def main():
 
     # connect to OneView    
     config_out = requestCredentials(args.appliance)
+
+    if config_out is None:
+        print ("ERROR: Environment variables ONEVIEWSDK_USERNAME and/or ONEVIEWSDK_PASSWORD not set")
+        exit(1)
+
     #print (config_out)
     oneview_client = OneViewClient(config_out)
     print ("\nLogin to OneView successful")
@@ -238,6 +292,12 @@ def main():
             
     if templateCheck and fileCheck:
         switch_template_in_profiles(oneview_client, args.sp_template, args.file)    
+
+    if args.upd_from_profile_template:
+        if fileCheck:
+            update_from_profile_template(oneview_client, args.file)
+        else:
+            print ("\nERROR: Operation 'update from template' file is missing")
     
     exit(0)
 
