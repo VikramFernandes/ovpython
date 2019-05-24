@@ -20,6 +20,16 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 # Author : Vikram Fernandes
+# -------------------------
+# Revision 3
+# date: 2019/05/08 19:09:30; author: dhorn;
+# Modified -pp option to work as expected with -f function
+# -------------------------
+# -------------------------
+# Revision 4
+# date: 2019/05/24 15:05:00; author: vikramf;
+# Added -r option to refresh a list of profiles with -f
+# -------------------------
 ###
 
 from pprint import pprint
@@ -51,6 +61,8 @@ def buildArguments():
                     help="Update profiles from its template ")        
     ap.add_argument("-f", "--file",   dest="file",  help="File containing list of Server Profile names")
     ap.add_argument("-t", "--template",   dest="sp_template", help="Template name")
+    ap.add_argument("-rp", "--refresh-profiles",   dest="sp_refresh", action='store_true', help="Refresh profile")
+    ap.add_argument("-rhw", "--refresh-hardware",   dest="hw_refresh", action='store_true', help="Refresh hardware")
     ap.add_argument("-a", "--appliance",   dest="appliance", help="Appliance IP", required=True)
 
     return ap
@@ -59,6 +71,7 @@ def buildArguments():
 # Function to retrieve user details
 #
 ##################################################################
+'''
 def get_para(msg):
     """
     Read a parameter
@@ -74,7 +87,7 @@ def get_para(msg):
         else:
             is_valid = 0
     return val
-
+'''
 ##################################################################
 # Function to validate appliance
 #
@@ -136,7 +149,12 @@ def update_from_profile_template(oneview_client, file_in):
             for line in list:
                     line = line[:-1]
                     try:
-                        profile = oneview_client.server_profiles.get_by_name(line)                        
+                        profile = oneview_client.server_profiles.get_by_name(line)     
+
+                        if profile is None:
+                            print ("ERROR: Profile - {} does not exist".format(line))
+                            continue
+
                         print()
                         print("Profile : {} update from template in progress".format(line))
                         if profile.data['templateCompliance'] == "NonCompliant":
@@ -168,6 +186,11 @@ def switch_template_in_profiles(oneview_client, template_in, file_in):
                             print()
                             print("Profile : {} update in progress".format(line))
                             profile = oneview_client.server_profiles.get_by_name(line)
+
+                            if profile is None:
+                                print ("ERROR: Profile - {} does not exist".format(line))
+                                continue
+
                             profile_to_update = profile.data.copy()
                             if profile_to_update['serverProfileTemplateUri'] != template.data["uri"]:
                                 profile_to_update["serverProfileTemplateUri"] = (template.data["uri"])                                
@@ -212,7 +235,101 @@ def print_profiles(oneview_client):
             print('   {:50.50}\t{:60.60}\t{:10}\t{:15}'.format(profile['name'],sp_template['name'], profile['status'], profile['templateCompliance']))
         else:
             print('   {:50.50}\t{:60.60}\t{:10}\t{:15}'.format(profile['name'],"**None**",profile['status'], profile['templateCompliance']))
-    
+
+##################################################################
+# Function to print configured profiles with templates with input file
+#
+##################################################################
+def print_profiles_with_input_file(oneview_client, file_in):
+    print("\n")
+    print("   {:50}\t{:60.60}\t{:10}\t{:15}".format("Server Profiles", "Server Profile Templates", "Status", "Compliance"))
+    print("   {:50}\t{:60}\t{:10}\t{:15}".format("===============", "========================", "======", "=========="))
+    with open(file_in, "r") as list:
+            for line in list:
+                    line = line[:-1]
+                    try:
+                        profile = oneview_client.server_profiles.get_by_name(line)
+
+                        if profile is None:
+                            print ("ERROR: Profile - {} does not exist".format(line))
+                            continue
+
+                        if profile.data['serverProfileTemplateUri']:
+                            #print(profile.data['serverProfileTemplateUri'])
+                            sp_template = oneview_client.server_profile_templates.get_by_uri(profile.data['serverProfileTemplateUri']).data            
+                            print('   {:50.50}\t{:60.60}\t{:10}\t{:15}'.format(profile.data['name'],sp_template['name'], profile.data['status'], profile.data['templateCompliance']))
+                        else:
+                            print('   {:50.50}\t{:60.60}\t{:10}\t{:15}'.format(profile.data['name'],"**None**",profile.data['status'], profile.data['templateCompliance']))
+                    except HPOneViewException as e:
+                            print("ERROR: Profile - {} update failed".format(line))
+                            print(e.msg)
+
+##################################################################
+# Function to refresh configured profiles with input file
+#
+##################################################################
+def refresh_profiles_with_input_file(oneview_client, file_in):
+    print("\n")
+    with open(file_in, "r") as list:
+            for line in list:
+                    line = line[:-1]
+                    try:
+                        profile = oneview_client.server_profiles.get_by_name(line)      
+
+                        if profile is None:
+                            print ("ERROR: Profile - {} does not exist".format(line))
+                            continue
+
+                        print()
+                        print("Profile : {} refresh in progress".format(line))                        
+                        if profile.data['refreshState'] == "RefreshPending" or profile.data['refreshState'] == "NotRefreshing":
+                            profile_updated = profile.patch(operation="replace", path="/refreshState", value="RefreshPending")
+
+                            if profile_updated.data['refreshState'] == 'NotRefreshing':
+                                print("Profile : {} refresh completed ".format(line))
+                            else:
+                                print("ERROR: Profile : {} refresh".format(line))
+                        else:
+                            print("Profile : {} is refreshed".format(line))
+
+                    except HPOneViewException as e:
+                            print("ERROR: Profile - {} refresh failed".format(line))                            
+                            print(e.msg)
+
+##################################################################
+# Function to refresh hardware with input file
+#
+##################################################################
+def refresh_hw_with_input_file(oneview_client, file_in):
+    print("\n")
+    with open(file_in, "r") as list:
+            for line in list:
+                    line = line[:-1]
+                    try:
+                        svr_hw = oneview_client.server_hardware.get_by_name(line)
+
+                        if svr_hw is None:
+                            print ("ERROR: Server - {} does not exist".format(line))
+                            continue
+                        
+                        print()
+                        print("Server : {} refresh in progress".format(line))                        
+
+                        config = {
+                            "refreshState" : "RefreshPending"
+                        }
+
+                        refresh = svr_hw.refresh_state(config)
+                        
+                        if refresh['refreshState'] == "NotRefreshing":
+                            print("Server : {} is refreshed".format(line))
+                        else:
+                            print("ERROR: Server : {} refresh failed".format(line))
+
+                    except HPOneViewException as e:
+                            print("ERROR: Server - {} refresh failed - exception".format(line))                            
+                            print(e.msg)
+
 #################################################################
 # Function to validate if template exists
 #
@@ -283,13 +400,28 @@ def main():
         print_templates(oneview_client)
 
     if args.print_profiles:
-        print_profiles(oneview_client)
+        if fileCheck: 
+            print_profiles_with_input_file(oneview_client, args.file)
+        else:
+                print_profiles(oneview_client)
 
     if args.sp_template:
         if validate_template(oneview_client, args.sp_template):
             print ("\nTemplate : {} - is valid".format(args.sp_template))
             templateCheck = True
-            
+
+    if args.sp_refresh:
+        if fileCheck: 
+            refresh_profiles_with_input_file(oneview_client, args.file)
+        else:
+            print("\nERROR: Operation profile 'refresh' file is missing")                    
+    
+    if args.hw_refresh:
+        if fileCheck: 
+            refresh_hw_with_input_file(oneview_client, args.file)
+        else:
+            print("\nERROR: Operation hardware 'refresh' file is missing")          
+
     if templateCheck and fileCheck:
         switch_template_in_profiles(oneview_client, args.sp_template, args.file)    
 
@@ -309,3 +441,4 @@ def main():
 if __name__ == "__main__":
 	import sys
 	sys.exit(main())
+
